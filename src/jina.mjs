@@ -142,7 +142,8 @@ export async function captureScreenshot(url, { fullPage = false, fresh = false, 
   const { data } = await callJina(body, { timeoutMs: 60_000 });
   const imageUrl = data.pageshotUrl || data.screenshotUrl;
   if (!imageUrl) throw new Error("Jina Reader did not return a screenshot URL");
-  const imageResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) });
+  const safeImageUrl = assertPublicHttpUrl(imageUrl);
+  const imageResponse = await fetch(safeImageUrl, { signal: AbortSignal.timeout(20_000), redirect: "error" });
   if (!imageResponse.ok) throw new Error(`Screenshot download failed with HTTP ${imageResponse.status}`);
   const contentLength = Number(imageResponse.headers.get("content-length") || 0);
   if (contentLength > MAX_SCREENSHOT_BYTES) throw new Error(`Screenshot is too large (${contentLength} bytes; limit ${MAX_SCREENSHOT_BYTES})`);
