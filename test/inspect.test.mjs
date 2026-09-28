@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertPublicHttpUrl, sanitizeUrl } from "../src/jina.mjs";
-import { inspectElements, inspectForms, inspectResources, inspectAccessibility, inspectStyles } from "../src/inspect.mjs";
+import { sanitizeRenderedHtmlForOutput, inspectElements, inspectForms, inspectResources, inspectAccessibility, inspectStyles, inspectPageMetadata } from "../src/inspect.mjs";
 
 const html = `<!doctype html><html lang="en"><head><title>T</title><style>.x{display:none;background:url('https://cdn.example/a.png?token=secret')}</style><script>window.SECRET='do-not-return'</script><script src="https://cdn.example/app.js?key=abc"></script></head><body><main><h1 id="title">Hello</h1><form id="login" action="https://example.com/login?session=abc" method="post"><label for="pw">Password</label><input id="pw" name="password" type="password" value="super-secret" autocomplete="current-password" style="display:none;position:absolute;color:red"><button type="submit">Go</button></form><iframe src="https://frame.example/path?token=x"></iframe><a href="https://example.com/x?auth=abc#frag">Link</a></main></body></html>`;
 
@@ -46,4 +46,22 @@ test("style inspection redacts URL query values from snippets", () => {
   const s = inspectStyles(html, { baseUrl: "https://example.com/" });
   assert.equal(s.inlineStylesheets[0].snippet.includes("token=secret"), false);
   assert.equal(s.inlineStylesheets[0].snippet.includes("https://cdn.example/a.png"), true);
+});
+
+
+test("rendered HTML output redacts values, inline script bodies and secret meta", () => {
+  const input = html.replace("<title>T</title>", "<title>T</title><meta name=csrf-token content=abc123><textarea>private text</textarea>");
+  const safe = sanitizeRenderedHtmlForOutput(input, { baseUrl: "https://example.com/" });
+  assert.equal(safe.includes("super-secret"), false);
+  assert.equal(safe.includes("do-not-return"), false);
+  assert.equal(safe.includes("private text"), false);
+  assert.equal(safe.includes("abc123"), false);
+  assert.equal(safe.includes("data-jwi-inline-sha256"), true);
+});
+
+test("page metadata redacts secret-named meta fields", () => {
+  const input = '<html><head><title>x</title><meta name="csrf-token" content="top-secret"><meta name="description" content="ok"></head></html>';
+  const m = inspectPageMetadata(input, { baseUrl: "https://example.com", jina: { metadata: { "csrf-token": "bad", viewport: "width=device-width" } } });
+  assert.equal(m.meta.find(x=>x.name === "csrf-token").content, "[redacted]");
+  assert.equal("csrf-token" in m.jinaMetadata, false);
 });

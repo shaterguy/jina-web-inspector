@@ -24,7 +24,7 @@ Anonymous Jina Reader currently allows rendered HTML, CSS selector targeting, sc
 - `get_capabilities`
 - `read_url`
 - `capture_screenshot`
-- `get_rendered_html`
+- `get_rendered_html` (sanitized HTML; form values and inline script bodies are redacted)
 - `inspect_elements`
 - `inspect_dom`
 - `inspect_frames`

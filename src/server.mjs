@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { readOne, fetchRenderedHtml, captureScreenshot } from "./jina.mjs";
-import { inspectElements, inspectDom, inspectFrames, inspectStyles, inspectResources, inspectForms, inspectAccessibility, inspectPageMetadata } from "./inspect.mjs";
+import { sanitizeRenderedHtmlForOutput, inspectElements, inspectDom, inspectFrames, inspectStyles, inspectResources, inspectForms, inspectAccessibility, inspectPageMetadata } from "./inspect.mjs";
 
 export const SERVICE = "jina-web-inspector";
 export const VERSION = "0.2.0-dev1";
@@ -72,13 +72,14 @@ export function createMcpServer() {
 
   server.registerTool("get_rendered_html", {
     title: "get_rendered_html",
-    description: "Return Jina's browser-rendered HTML, optionally narrowed to a CSS selector. Useful when Markdown has hidden structural details.",
+    description: "Return sanitized Jina browser-rendered HTML, optionally narrowed to a CSS selector. Form values, srcdoc, event handlers, nonces and inline script bodies are redacted.",
     inputSchema: { url: singleUrl, selector: z.string().min(1).max(500).optional(), includeShadowDom: shadow, fresh, viewport: viewportSchema, maxChars: z.number().int().min(1000).max(500000).default(100000).optional() }, annotations,
   }, async ({ url, selector, includeShadowDom = true, fresh = false, viewport, maxChars = 100000 }) => {
     try {
       const page = await rendered(url, { selector, includeShadowDom, fresh, viewport });
-      const truncated = page.html.length > maxChars;
-      return textResult({ url: page.finalUrl, title: page.title, httpStatus: page.httpStatus, selector: selector || null, html: truncated ? page.html.slice(0, maxChars) : page.html, truncated, originalChars: page.html.length });
+      const safeHtml = sanitizeRenderedHtmlForOutput(page.html, { baseUrl: page.finalUrl });
+      const truncated = safeHtml.length > maxChars;
+      return textResult({ url: page.finalUrl, title: page.title, httpStatus: page.httpStatus, selector: selector || null, html: truncated ? safeHtml.slice(0, maxChars) : safeHtml, truncated, originalChars: safeHtml.length, sanitized: true });
     } catch (error) { return errorResult(error); }
   });
 

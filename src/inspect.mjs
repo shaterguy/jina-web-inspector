@@ -4,6 +4,7 @@ import { sanitizeUrl, scrubText } from "./jina.mjs";
 
 const ATTR_ALLOW = new Set(["id","class","role","name","type","placeholder","title","alt","for","method","target","tabindex","autocomplete","disabled","required","readonly","checked","selected","loading","width","height","sandbox","allow","rel","as","media","crossorigin","referrerpolicy","aria-hidden"]);
 const INLINE_STYLE_ALLOW = new Set(["display","visibility","opacity","position","width","height","min-width","min-height","max-width","max-height","overflow","overflow-x","overflow-y","pointer-events","z-index"]);
+const SECRET_META_NAME = /(csrf|xsrf|token|nonce|secret|auth|session|credential|api[_-]?key)/i;
 
 export function sha256Text(value) {
   return crypto.createHash("sha256").update(String(value ?? "")).digest("hex");
@@ -75,6 +76,45 @@ function formSummary(form, baseUrl) {
 function queryAllSafe(root, selector) {
   try { return { nodes: root.querySelectorAll(selector), error: null }; }
   catch (error) { return { nodes: [], error: String(error?.message || error) }; }
+}
+
+
+export function sanitizeRenderedHtmlForOutput(html, { baseUrl = "" } = {}) {
+  const root = rootOf(html);
+  for (const el of root.querySelectorAll("*")) {
+    const attrs = Object.keys(el.attributes || {});
+    for (const rawName of attrs) {
+      const name = rawName.toLowerCase();
+      if (name === "nonce" || name === "srcdoc" || name.startsWith("on")) el.removeAttribute(rawName);
+      if (name === "value" && ["input","option","button"].includes(tag(el))) el.removeAttribute(rawName);
+      if (["href","src","action","formaction","poster"].includes(name)) {
+        const old = el.getAttribute(rawName);
+        if (old) el.setAttribute(rawName, resolveSafe(old, baseUrl));
+      }
+      if (name === "srcset") {
+        const old = el.getAttribute(rawName);
+        if (old) el.setAttribute(rawName, sanitizeSrcset(old, baseUrl));
+      }
+    }
+    if (tag(el) === "textarea") {
+      const n = (el.textContent || "").length;
+      if (n) el.setAttribute("data-jwi-value-redacted", "true");
+      el.set_content("");
+    }
+    if (tag(el) === "script" && !el.getAttribute("src")) {
+      const body = el.textContent || "";
+      if (body) {
+        el.setAttribute("data-jwi-inline-length", String(body.length));
+        el.setAttribute("data-jwi-inline-sha256", sha256Text(body));
+      }
+      el.set_content("");
+    }
+    if (tag(el) === "meta") {
+      const key = el.getAttribute("name") || el.getAttribute("property") || el.getAttribute("http-equiv") || "";
+      if (SECRET_META_NAME.test(key) && el.hasAttribute("content")) el.setAttribute("content", "[redacted]");
+    }
+  }
+  return root.toString();
 }
 
 export function inspectElements(html, { selectors, maxMatches = 25, includeText = true, baseUrl = "" }) {
@@ -314,7 +354,8 @@ export function inspectPageMetadata(html, { baseUrl = "", jina = {} } = {}) {
   const metas = root.querySelectorAll("meta").slice(0, 120).map(el => {
     const name = el.getAttribute("name") || el.getAttribute("property") || el.getAttribute("http-equiv") || null;
     let content = el.getAttribute("content") || "";
-    if (/^https?:\/\//i.test(content)) content = resolveSafe(content, baseUrl);
+    if (SECRET_META_NAME.test(name || "")) content = "[redacted]";
+    else if (/^https?:\/\//i.test(content)) content = resolveSafe(content, baseUrl);
     else content = scrubText(content, 500);
     return { name, content };
   });
@@ -327,6 +368,6 @@ export function inspectPageMetadata(html, { baseUrl = "", jina = {} } = {}) {
     html: { lang: htmlEl?.getAttribute("lang") || null, dir: htmlEl?.getAttribute("dir") || null },
     canonical: resolveSafe(canonical?.getAttribute("href"), baseUrl) || null,
     meta: metas,
-    jinaMetadata: jina.metadata || {},
+    jinaMetadata: Object.fromEntries(Object.entries(jina.metadata || {}).filter(([k]) => !SECRET_META_NAME.test(k)).slice(0, 120).map(([k,v]) => [k, typeof v === "string" && /^https?:\/\//i.test(v) ? resolveSafe(v, baseUrl) : scrubText(typeof v === "string" ? v : JSON.stringify(v), 500)])),
   };
 }
